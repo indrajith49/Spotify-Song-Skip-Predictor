@@ -1,0 +1,189 @@
+import pandas as pd
+import numpy as np
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+
+df = pd.read_csv(r"C:\Users\indra\Downloads\spotify_skz_streaming_4.25_4.26.csv", encoding='latin1')
+print(df.head(6))
+print(df.shape)
+print(df.isnull())
+print(df.dtypes)
+print("-"*50)
+if 'is_skip' not in df.columns:
+    print("doesnt exist so ive added one")
+    df['is_skip'] = (df['played_ms']< 10000).astype(int)
+else:
+    print("exists alraedy")
+    print(df['is_skip'].head())
+
+print("Target distribution:")
+print(df['is_skip'].value_counts())
+print(f"\nPercentage skips: {df['is_skip'].mean() * 100:.2f}%")
+
+
+print("THRESHOLD "*50)
+# Test different thresholds (in milliseconds)
+thresholds = [5000, 10000, 15000, 20000, 30000, 60000]
+
+print("Threshold (seconds) | Skips Count | Skip Percentage")
+print("-" * 50)
+
+for t in thresholds:
+    # Create temporary column
+    temp_skip = (df['played_ms'] < t).astype(int)
+    count = temp_skip.sum()
+    percentage = temp_skip.mean() * 100
+    print(f"{t/1000:>15.1f} | {count:>11} | {percentage:>10.2f}%")
+
+# 1. Create your target column with 10-second threshold
+df['is_skip'] = (df['played_ms'] < 10000).astype(int)
+
+columns_to_drop = ['end_time', 'played_min', 'played_h', 'played_ms']
+df = df.drop(columns=columns_to_drop)
+print(f"Duplicate rows before removal: {df.duplicated().sum()}")
+df = df.drop_duplicates()
+print(f"Duplicate rows after removal: {df.duplicated().sum()}")
+
+print(df.shape)
+
+print(df.columns.tolist())
+
+print(df["is_skip"].value_counts())
+print(f"Skip percentage: {df['is_skip'].mean()*100:.2f}%")
+
+from sklearn.model_selection import train_test_split
+x = df.drop('is_skip', axis = 1)
+y = df['is_skip']
+
+print(f"Features: {x.shape}")
+print(f"Label: {y.shape}")
+
+x_train, x_temp, y_train, y_temp = train_test_split(
+x, y, test_size = 0.2, random_state=42
+)
+
+x_val, x_test, y_val, y_test = train_test_split(
+    x_temp, y_temp, test_size=0.5, random_state=42
+)
+
+print(f"Training set: {len(x_train)} examples")
+print(f"Validation set: {len(x_val)}")
+print(f"Test set: {len(x_test)} examples")
+
+print("-"*50)
+print("Feature Engineering || "*10)
+
+numerical_cols = ['end_year', 'end_month', 'end_date', 'end_hour_UTC', 'end_hour_PST', 'release_year']
+
+# Categorical columns (text/labels)
+categorical_cols = ['end_day', 'artist_name', 'track_name', 'album_name', 'release_country', 'album_type']
+preprocessor = ColumnTransformer(
+    transformers= [
+        ('num', StandardScaler(), numerical_cols),
+        ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), categorical_cols)
+    ]
+)
+X_train_processed = preprocessor.fit_transform(x_train)
+X_val_processed = preprocessor.transform(x_val)
+X_test_processed = preprocessor.transform(x_test)
+
+print(f"Original X_train shape: {x_train.shape}")
+print(f"Processed X_train shape: {X_train_processed.shape}")
+print(f"Processed X_val shape: {X_val_processed.shape}")
+print(f"Processed X_test shape: {X_test_processed.shape}")
+
+print("-"*50)
+print("Model Training || "*10)
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
+model = LogisticRegression(max_iter=1000, random_state=42)
+model.fit(X_train_processed, y_train)
+print("Model printed successfully")
+y_val_pred = model.predict(X_val_processed)
+y_val_proba = model.predict_proba(X_val_processed)[:, 1]
+
+
+print("----------------------------- VALIDATION SET RESULTS -----------------------------")
+print(classification_report(y_val, y_val_pred))
+print(f"AUC: {roc_auc_score(y_val, y_val_proba):.3f}")
+print("Confusion Matrix:")
+print(confusion_matrix(y_val, y_val_pred))
+
+
+print(f"Training set - keeps: {(y_train==0).sum()}")
+print(f"Training set - skips: {(y_train==1).sum()}")
+
+from sklearn.utils.class_weight import compute_class_weight
+import numpy as np
+
+all_labels = np.concatenate([y_train, y_val, y_test])
+class_weights = compute_class_weight('balanced', classes=np.unique(all_labels), y=all_labels)
+weight_dict = dict(zip(np.unique(all_labels), class_weights))
+
+model_weighted = LogisticRegression(
+    max_iter=1000,
+    random_state=42,
+    class_weight= weight_dict
+)
+
+model_weighted.fit(X_train_processed, y_train)
+
+y_val_pred_weighted = model_weighted.predict(X_val_processed)
+y_val_proba_weighted = model_weighted.predict_proba(X_val_processed)[:,1]
+
+
+print("----------------------------- WEIGHTED MODEL - VALIDATION SET RESULTS -----------------------------")
+print(classification_report(y_val, y_val_pred_weighted))
+print(f"AUC: {roc_auc_score(y_val, y_val_proba_weighted):.3f}")
+print("Confusion Matrix:")
+print(confusion_matrix(y_val, y_val_pred_weighted))
+
+
+# Evaluate the weighted model on the test set
+y_test_pred_weighted = model_weighted.predict(X_test_processed)
+y_test_proba_weighted = model_weighted.predict_proba(X_test_processed)[:, 1]
+
+print("-----------------------------FINAL TEST SET RESULTS-----------------------------")
+print(classification_report(y_test, y_test_pred_weighted))
+print(f"AUC: {roc_auc_score(y_test, y_test_proba_weighted):.3f}")
+print("Confusion Matrix:")
+print(confusion_matrix(y_test, y_test_pred_weighted))
+
+
+import joblib
+
+full_pipeline = Pipeline([
+    ('preprocessor', preprocessor),
+    ('classifier', model_weighted)
+])
+
+full_pipeline.fit(x,y)
+
+joblib.dump(full_pipeline, 'spotify_skip_model.pkl')
+
+loaded_model = joblib.load('spotify_skip_model.pkl')
+
+print("-----------------------------Real Test-----------------------------")
+
+new_song = pd.DataFrame({
+    'end_year': [2024],
+    'end_month': [4],
+    'end_date': [15],
+    'end_day': ['Saturday'],
+    'end_hour_UTC': [20],
+    'end_hour_PST': [12],
+    'artist_name': ['Linkin Park'],
+    'track_name': ['New Song'],
+    'album_name': ['New Album'],
+    'release_year': [2025],
+    'release_country': ['Bangladesh'],
+    'album_type': ['Single']
+})
+
+# Predict
+prediction = loaded_model.predict(new_song)
+probability = loaded_model.predict_proba(new_song)
+
+print(f"Will you skip? {'Yes (Skip)' if prediction[0] == 1 else 'No (Keep)'}")
+print(f"Probability of skipping: {probability[0][1] * 100:.2f}%")
