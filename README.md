@@ -10,3 +10,6 @@ Predicts the probability of skipping based on the listening history.
 - Feature engineering -> normalization + one-hot encoding
 - Handling imbalanced data -> class weights
 - Model evaluation -> precision, recall, F1, AUC, NOT just accuracy!
+
+
+# what I don't know yet is gitnore and how to connect codes with GitHub (trying to learn soon)
